@@ -37,7 +37,10 @@ class Source(Base):
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
-    listings: Mapped[list[Listing]] = relationship(back_populates="source")
+    listings: Mapped[list[Listing]] = relationship(
+        back_populates="source",
+        cascade="all, delete-orphan",
+    )
 
 
 class Listing(Base):
@@ -88,7 +91,10 @@ class Listing(Base):
     raw_payload: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     source: Mapped[Source] = relationship(back_populates="listings")
-    media: Mapped[list[ListingMedia]] = relationship(back_populates="listing")
+    media: Mapped[list[ListingMedia]] = relationship(
+        back_populates="listing",
+        cascade="all, delete-orphan",
+    )
 
 
 class ListingMedia(Base):
@@ -105,6 +111,48 @@ class ListingMedia(Base):
     media_type: Mapped[str] = mapped_column(String(32), default="image")
 
     listing: Mapped[Listing] = relationship(back_populates="media")
+
+
+class TgRawMessage(Base):
+    __tablename__ = "tg_raw_messages"
+    __table_args__ = (
+        UniqueConstraint("source_id", "chat_ref", "message_id", name="uq_tg_raw_source_chat_msg"),
+        Index("ix_tg_raw_posted_at", "posted_at"),
+        Index("ix_tg_raw_is_candidate", "is_candidate"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    source_id: Mapped[int] = mapped_column(ForeignKey("sources.id", ondelete="CASCADE"))
+    chat_ref: Mapped[str] = mapped_column(String(255), index=True)
+    message_id: Mapped[int] = mapped_column(Integer, index=True)
+
+    posted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    author_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    has_media: Mapped[bool] = mapped_column(Boolean, default=False)
+
+    phone: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    price_text: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    city: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    category: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    is_candidate: Mapped[bool] = mapped_column(Boolean, default=False)
+
+    message_link: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    raw_payload: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
+class SourceCursor(Base):
+    __tablename__ = "source_cursors"
+    __table_args__ = (
+        UniqueConstraint("source_id", "cursor_key", name="uq_source_cursor_source_key"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    source_id: Mapped[int] = mapped_column(ForeignKey("sources.id", ondelete="CASCADE"))
+    cursor_key: Mapped[str] = mapped_column(String(255), index=True)
+    cursor_value: Mapped[str] = mapped_column(String(255))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
 
 class Run(Base):

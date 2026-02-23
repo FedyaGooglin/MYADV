@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 from io import BytesIO
+from pathlib import Path
 
 import httpx
 from aiogram.types import BufferedInputFile
 from PIL import Image, ImageOps
+from telethon import TelegramClient
 
 CARD_SIZE = (1080, 1080)
 
@@ -28,17 +30,65 @@ def _to_square_jpeg(raw: bytes) -> bytes | None:
         return None
 
 
+def _parse_tg_media_ref(media_ref: str) -> tuple[str, int] | None:
+    # Формат: tgmsg://<chat_ref>/<message_id>
+    if not media_ref.startswith("tgmsg://"):
+        return None
+    payload = media_ref.removeprefix("tgmsg://")
+    if "/" not in payload:
+        return None
+    chat_ref, message_id_raw = payload.rsplit("/", 1)
+    if not chat_ref or not message_id_raw.isdigit():
+        return None
+    return chat_ref, int(message_id_raw)
+
+
+async def _load_tg_media_bytes(
+    *,
+    tg_client: TelegramClient | None,
+    media_ref: str,
+) -> bytes | None:
+    if tg_client is None:
+        return None
+
+    parsed = _parse_tg_media_ref(media_ref)
+    if parsed is None:
+        return None
+    chat_ref, message_id = parsed
+
+    entity = await tg_client.get_entity(chat_ref)
+    message = await tg_client.get_messages(entity, ids=message_id)
+    if not message or message.media is None:
+        return None
+
+    downloaded = await tg_client.download_media(message, file=bytes)
+    if isinstance(downloaded, bytes):
+        return downloaded
+    return None
+
+
 async def build_listing_card_photo(
     *,
     client: httpx.AsyncClient,
-    photo_url: str | None,
+    media_ref: str | None,
     filename: str,
+    tg_client: TelegramClient | None = None,
 ) -> BufferedInputFile:
-    if photo_url:
+    if media_ref:
         try:
-            response = await client.get(photo_url)
-            response.raise_for_status()
-            normalized = _to_square_jpeg(response.content)
+            content: bytes | None = None
+            if media_ref.startswith("tgmsg://"):
+                content = await _load_tg_media_bytes(tg_client=tg_client, media_ref=media_ref)
+            elif media_ref.startswith("http://") or media_ref.startswith("https://"):
+                response = await client.get(media_ref)
+                response.raise_for_status()
+                content = response.content
+            else:
+                local_path = Path(media_ref)
+                if local_path.exists() and local_path.is_file():
+                    content = local_path.read_bytes()
+
+            normalized = _to_square_jpeg(content) if content else None
             if normalized is not None:
                 return BufferedInputFile(normalized, filename=filename)
         except Exception:  # noqa: BLE001

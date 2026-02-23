@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "classifieds-hub"
 version = "0.1.0"
 description = "Local classifieds aggregator for Aykhal and Udachny"
-requires-python = ">=3.12"
+requires-python = ">=3.11"
 dependencies = [
   "aiogram>=3.0,<4.0",
   "sqlalchemy>=2.0,<3.0",
@@ -16,6 +16,7 @@ dependencies = [
   "pydantic-settings>=2.0,<3.0",
   "beautifulsoup4>=4.12,<5.0",
   "pillow>=10.0,<12.0",
+  "telethon>=1.36,<2.0",
 ]
 
 [project.optional-dependencies]
@@ -35,13 +36,13 @@ where = ["src"]
 
 [tool.ruff]
 line-length = 88
-target-version = "py312"
+target-version = "py311"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP", "N"]
 
 [tool.mypy]
-python_version = "3.12"
+python_version = "3.11"
 files = ["src"]
 strict = false
 warn_unused_configs = true

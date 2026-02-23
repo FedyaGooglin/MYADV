@@ -158,3 +158,81 @@ def test_list_active_categories_ignores_city_like_values(tmp_path) -> None:
             await engine.dispose()
 
     asyncio.run(scenario())
+
+
+def test_list_by_category_page_dedupes_same_phone_and_title(tmp_path) -> None:
+    async def scenario() -> None:
+        db_path = tmp_path / "test_dedupe.sqlite3"
+        engine = create_engine(f"sqlite+aiosqlite:///{db_path}")
+        await init_db(engine)
+
+        try:
+            session_factory = async_sessionmaker(engine, expire_on_commit=False)
+            async with session_factory() as session:
+                sources = SourceRepository(session)
+                listings = ListingRepository(session)
+
+                source = await sources.get_or_create(
+                    code="tg_chat",
+                    name="Telegram chat",
+                    source_type="telegram",
+                )
+
+                now = datetime.now(UTC)
+                await listings.upsert(
+                    ListingUpsertData(
+                        source_id=source.id,
+                        external_id="m1",
+                        url="https://t.me/x/1",
+                        title="Куплю ваз 2107 (карбюратор)",
+                        description="Первый пост",
+                        city="Aykhal",
+                        category="Авто",
+                        phone="+79244605550",
+                        published_at=now,
+                    )
+                )
+                await listings.upsert(
+                    ListingUpsertData(
+                        source_id=source.id,
+                        external_id="m2",
+                        url="https://t.me/x/2",
+                        title="Куплю темно-бордовый ВАЗ 2107 карбюратор",
+                        description="Второй пост",
+                        city="Aykhal",
+                        category="Авто",
+                        phone="+7 (924) 460-55-50",
+                        published_at=now - timedelta(hours=1),
+                    )
+                )
+                await listings.upsert(
+                    ListingUpsertData(
+                        source_id=source.id,
+                        external_id="m3",
+                        url="https://t.me/x/3",
+                        title="Продам тойота королла",
+                        description="Отдельное объявление",
+                        city="Aykhal",
+                        category="Авто",
+                        phone="+79248639324",
+                        published_at=now - timedelta(hours=2),
+                    )
+                )
+
+                page, total = await listings.list_by_category_page(
+                    category="Авто",
+                    city="Aykhal",
+                    page=0,
+                    page_size=10,
+                )
+                assert total == 2
+                assert len(page) == 2
+                titles = [item.title for item in page]
+                assert any("ваз 2107" in title.lower() for title in titles)
+                assert any("тойота" in title.lower() for title in titles)
+
+                await session.commit()
+        finally:
+            await engine.dispose()
+
+    asyncio.run(scenario())

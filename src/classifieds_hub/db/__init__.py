@@ -6,8 +6,10 @@ from classifieds_hub.db.models import (
     Listing,
     ListingMedia,
     Run,
+    SourceCursor,
     Source,
     Subscription,
+    TgRawMessage,
 )
 from classifieds_hub.db.repository import (
     DeliveryLogRepository,
@@ -15,9 +17,12 @@ from classifieds_hub.db.repository import (
     ListingRepository,
     ListingUpsertData,
     RunRepository,
+    SourceCursorRepository,
     SourceRepository,
     SubscriptionFilters,
     SubscriptionRepository,
+    TgRawRepository,
+    TgRawUpsertData,
 )
 from classifieds_hub.db.session import create_engine, create_session_factory, init_db
 
@@ -28,11 +33,16 @@ __all__ = [
     "ListingMedia",
     "Run",
     "Source",
+    "SourceCursor",
     "Subscription",
+    "TgRawMessage",
     "SourceRepository",
     "ListingRepository",
     "ListingUpsertData",
     "RunRepository",
+    "TgRawRepository",
+    "TgRawUpsertData",
+    "SourceCursorRepository",
     "SubscriptionRepository",
     "SubscriptionFilters",
     "DeliveryLogRepository",

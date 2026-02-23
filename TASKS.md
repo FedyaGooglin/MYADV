@@ -107,10 +107,10 @@ Deliverable: irrelevant ultra-niche categories excluded.
 
 ### B1 - Telegram Chats/Channels Scraping
 
-- [ ] Add Telegram source adapter (client API)
-- [ ] Parse text, links, phone, price, location hints
-- [ ] Classify posts into normalized categories
-- [ ] Dedup against website listings
+- [x] Add Telegram source adapter (client API)
+- [x] Parse text, links, phone, price, location hints
+- [x] Classify posts into normalized categories
+- [x] Dedup against website listings
 
 ### B2 - Avito Fallback Adapter
 

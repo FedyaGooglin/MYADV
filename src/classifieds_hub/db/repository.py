@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 import json
+import re
 
 from sqlalchemy import Select, and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -13,14 +14,20 @@ from classifieds_hub.db.models import (
     Listing,
     ListingMedia,
     Run,
+    SourceCursor,
     Source,
     Subscription,
+    TgRawMessage,
 )
 
 
 def utc_now() -> datetime:
     # Единая функция времени, чтобы проще контролировать UTC-инвариант.
     return datetime.now(timezone.utc)
+
+
+DEDUPE_TEXT_RE = re.compile(r"[^a-zа-я0-9]+", re.IGNORECASE)
+DEDUPE_DIGITS_RE = re.compile(r"\D+")
 
 
 @dataclass(slots=True)
@@ -78,6 +85,74 @@ class ListingRepository:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
 
+    @staticmethod
+    def _normalize_for_dedupe(value: str | None) -> str:
+        if not value:
+            return ""
+        lowered = value.lower().replace("ё", "е")
+        compact = DEDUPE_TEXT_RE.sub(" ", lowered)
+        return " ".join(compact.split())
+
+    @staticmethod
+    def _dedupe_key(item: Listing) -> str | None:
+        title_key = ListingRepository._normalize_for_dedupe(item.title)
+        if len(title_key) < 8:
+            return None
+
+        phone_digits = DEDUPE_DIGITS_RE.sub("", item.phone or "")
+        if phone_digits:
+            return f"p:{phone_digits}|t:{title_key}"
+
+        price_key = ListingRepository._normalize_for_dedupe(item.price_text)
+        if price_key:
+            return f"t:{title_key}|pr:{price_key}"
+
+        return None
+
+    @staticmethod
+    def _title_token_set(title: str) -> set[str]:
+        normalized = ListingRepository._normalize_for_dedupe(title)
+        tokens = {
+            token
+            for token in normalized.split()
+            if len(token) >= 3 and token not in {"куплю", "продам", "продаю", "срочно"}
+        }
+        return tokens
+
+    @staticmethod
+    def _dedupe_listings(items: list[Listing]) -> list[Listing]:
+        unique: list[Listing] = []
+        seen: set[str] = set()
+        seen_by_phone: dict[str, list[set[str]]] = {}
+        for item in items:
+            key = ListingRepository._dedupe_key(item)
+            if key and key in seen:
+                continue
+
+            phone_digits = DEDUPE_DIGITS_RE.sub("", item.phone or "")
+            if phone_digits:
+                current_tokens = ListingRepository._title_token_set(item.title)
+                if current_tokens:
+                    phone_history = seen_by_phone.get(phone_digits, [])
+                    is_similar_duplicate = False
+                    for prev_tokens in phone_history:
+                        overlap = len(current_tokens & prev_tokens)
+                        union = len(current_tokens | prev_tokens)
+                        if union > 0 and (overlap / union) >= 0.6:
+                            is_similar_duplicate = True
+                            break
+                    if is_similar_duplicate:
+                        continue
+
+            if key:
+                seen.add(key)
+            if phone_digits:
+                seen_by_phone.setdefault(phone_digits, []).append(
+                    ListingRepository._title_token_set(item.title)
+                )
+            unique.append(item)
+        return unique
+
     async def get_by_source_and_url(self, source_id: int, url: str) -> Listing | None:
         stmt: Select[tuple[Listing]] = select(Listing).where(
             Listing.source_id == source_id, Listing.url == url
@@ -89,6 +164,19 @@ class ListingRepository:
         stmt: Select[tuple[Listing]] = select(Listing).where(Listing.id == listing_id)
         result = await self.session.execute(stmt)
         return result.scalar_one_or_none()
+
+    async def delete_by_external_id(self, *, source_id: int, external_id: str) -> bool:
+        stmt: Select[tuple[Listing]] = select(Listing).where(
+            Listing.source_id == source_id,
+            Listing.external_id == external_id,
+        )
+        result = await self.session.execute(stmt)
+        row = result.scalar_one_or_none()
+        if row is None:
+            return False
+        await self.session.delete(row)
+        await self.session.flush()
+        return True
 
     async def upsert(self, data: ListingUpsertData) -> tuple[Listing, bool]:
         # Основной путь записи: либо новое объявление, либо обновление существующего.
@@ -233,20 +321,17 @@ class ListingRepository:
         if city:
             base_filters.append(Listing.city == city)
 
-        total_stmt = select(func.count(Listing.id)).where(and_(*base_filters))
-        total_result = await self.session.execute(total_stmt)
-        total = int(total_result.scalar_one() or 0)
-
-        offset = max(0, page) * page_size
         list_stmt = (
             select(Listing)
             .where(and_(*base_filters))
             .order_by(Listing.published_at.desc(), Listing.id.desc())
-            .offset(offset)
-            .limit(page_size)
         )
         rows = await self.session.execute(list_stmt)
-        return list(rows.scalars().all()), total
+        deduped = self._dedupe_listings(list(rows.scalars().all()))
+
+        total = len(deduped)
+        offset = max(0, page) * page_size
+        return deduped[offset : offset + page_size], total
 
     async def search(
         self,
@@ -531,3 +616,123 @@ class ListingMediaRepository:
         )
         result = await self.session.execute(stmt)
         return result.scalar_one_or_none() is not None
+
+    async def has_any_media(self, *, listing_id: int) -> bool:
+        stmt = select(ListingMedia.id).where(ListingMedia.listing_id == listing_id).limit(1)
+        result = await self.session.execute(stmt)
+        return result.scalar_one_or_none() is not None
+
+
+@dataclass(slots=True)
+class TgRawUpsertData:
+    source_id: int
+    chat_ref: str
+    message_id: int
+    posted_at: datetime | None
+    author_name: str | None
+    text: str | None
+    has_media: bool
+    phone: str | None
+    price_text: str | None
+    city: str | None
+    category: str | None
+    is_candidate: bool
+    message_link: str | None
+    raw_payload: str | None
+
+
+class TgRawRepository:
+    def __init__(self, session: AsyncSession) -> None:
+        self.session = session
+
+    async def upsert(self, data: TgRawUpsertData) -> tuple[TgRawMessage, bool]:
+        stmt = select(TgRawMessage).where(
+            TgRawMessage.source_id == data.source_id,
+            TgRawMessage.chat_ref == data.chat_ref,
+            TgRawMessage.message_id == data.message_id,
+        )
+        result = await self.session.execute(stmt)
+        existing = result.scalar_one_or_none()
+
+        if existing is None:
+            row = TgRawMessage(
+                source_id=data.source_id,
+                chat_ref=data.chat_ref,
+                message_id=data.message_id,
+                posted_at=data.posted_at,
+                author_name=data.author_name,
+                text=data.text,
+                has_media=data.has_media,
+                phone=data.phone,
+                price_text=data.price_text,
+                city=data.city,
+                category=data.category,
+                is_candidate=data.is_candidate,
+                message_link=data.message_link,
+                raw_payload=data.raw_payload,
+            )
+            self.session.add(row)
+            await self.session.flush()
+            return row, True
+
+        existing.posted_at = data.posted_at
+        existing.author_name = data.author_name
+        existing.text = data.text
+        existing.has_media = data.has_media
+        existing.phone = data.phone
+        existing.price_text = data.price_text
+        existing.city = data.city
+        existing.category = data.category
+        existing.is_candidate = data.is_candidate
+        existing.message_link = data.message_link
+        existing.raw_payload = data.raw_payload
+        await self.session.flush()
+        return existing, False
+
+
+class SourceCursorRepository:
+    def __init__(self, session: AsyncSession) -> None:
+        self.session = session
+
+    async def get_last_message_id(self, *, source_id: int, cursor_key: str) -> int | None:
+        stmt = select(SourceCursor).where(
+            SourceCursor.source_id == source_id,
+            SourceCursor.cursor_key == cursor_key,
+        )
+        result = await self.session.execute(stmt)
+        row = result.scalar_one_or_none()
+        if row is None:
+            return None
+        try:
+            return int(row.cursor_value)
+        except ValueError:
+            return None
+
+    async def set_last_message_id(self, *, source_id: int, cursor_key: str, value: int) -> None:
+        stmt = select(SourceCursor).where(
+            SourceCursor.source_id == source_id,
+            SourceCursor.cursor_key == cursor_key,
+        )
+        result = await self.session.execute(stmt)
+        row = result.scalar_one_or_none()
+
+        if row is None:
+            row = SourceCursor(source_id=source_id, cursor_key=cursor_key, cursor_value=str(value))
+            self.session.add(row)
+        else:
+            row.cursor_value = str(value)
+            row.updated_at = utc_now()
+        await self.session.flush()
+
+    async def delete(self, *, source_id: int, cursor_key: str) -> bool:
+        stmt = select(SourceCursor).where(
+            SourceCursor.source_id == source_id,
+            SourceCursor.cursor_key == cursor_key,
+        )
+        result = await self.session.execute(stmt)
+        row = result.scalar_one_or_none()
+        if row is None:
+            return False
+        await self.session.delete(row)
+        await self.session.flush()
+        return True

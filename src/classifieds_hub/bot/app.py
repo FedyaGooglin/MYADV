@@ -4,6 +4,7 @@ import asyncio
 import logging
 
 from aiogram import Bot, Dispatcher
+from aiogram.exceptions import TelegramNetworkError
 
 from classifieds_hub.bot.handlers import create_router
 from classifieds_hub.core.config import Settings
@@ -18,16 +19,31 @@ async def run_polling(settings: Settings) -> None:
     engine = create_engine(settings.DATABASE_URL)
     session_factory = create_session_factory(settings.DATABASE_URL)
     await init_db(engine)
+    logger = logging.getLogger(__name__)
 
-    # Используем стандартную сессию aiogram, чтобы учитывать прокси окружения.
-    bot = Bot(token=settings.TELEGRAM_BOT_TOKEN)
-    dp = Dispatcher()
-    dp.include_router(create_router(session_factory))
+    backoff_seconds = 2
 
     try:
-        await dp.start_polling(bot)
+        while True:
+            # Используем стандартную сессию aiogram, чтобы учитывать прокси окружения.
+            bot = Bot(token=settings.TELEGRAM_BOT_TOKEN)
+            dp = Dispatcher()
+            dp.include_router(create_router(session_factory, settings))
+
+            try:
+                await dp.start_polling(bot)
+                break
+            except TelegramNetworkError as exc:
+                logger.warning(
+                    "Telegram network error: %s. Retrying in %ss",
+                    exc,
+                    backoff_seconds,
+                )
+                await asyncio.sleep(backoff_seconds)
+                backoff_seconds = min(backoff_seconds * 2, 60)
+            finally:
+                await bot.session.close()
     finally:
-        await bot.session.close()
         await engine.dispose()
 
 

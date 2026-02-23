@@ -11,7 +11,7 @@ MVP focus:
 
 ## Stack
 
-- Python 3.12
+- Python 3.11+
 - `httpx` + `beautifulsoup4` for web collection/parsing
 - `SQLAlchemy` + `aiosqlite` for storage
 - `apscheduler` for timed runs
@@ -21,7 +21,7 @@ MVP focus:
 ## Quick start
 
 ```bash
-python3.12 -m venv .venv
+python3.11 -m venv .venv
 source .venv/bin/activate
 pip install -U pip
 pip install -e .[dev]
@@ -38,6 +38,26 @@ Run one Aykhal ingest pass:
 
 ```bash
 python -m classifieds_hub.collectors.run_once
+```
+
+Run Telegram chat ingest pass (Client API):
+
+```bash
+python -m classifieds_hub.collectors.tg_chat
+```
+
+Authorize Telegram Client API session (first run):
+
+```bash
+python -m classifieds_hub.collectors.tg_auth
+```
+
+If code delivery is stuck, reset session and auth again:
+
+```bash
+python -m classifieds_hub.collectors.tg_auth
+# then choose action: reset
+python -m classifieds_hub.collectors.tg_auth
 ```
 
 Run Telegram bot polling:

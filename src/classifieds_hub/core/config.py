@@ -34,6 +34,16 @@ class Settings(BaseSettings):
     REQUEST_RETRIES: int = 2
     EXISTING_BACKFILL_PER_RUN: int = 10
 
+    TG_API_ID: int | None = None
+    TG_API_HASH: str = ""
+    TG_SESSION_NAME: str = "classifieds_hub_session"
+    TG_SOURCE_CHATS: Annotated[list[str], NoDecode] = Field(default_factory=lambda: ["uda4niy"])
+    TG_BACKFILL_DAYS: int = 30
+    TG_FETCH_LIMIT_PER_RUN: int = 30
+    TG_MAX_MESSAGES_PER_RUN: int = 300
+    TG_DELAY_SECONDS: float = 1.2
+    TG_STRICT_CLASSIFICATION: bool = True
+
     @field_validator("TARGET_CITIES", mode="before")
     @classmethod
     def parse_cities(cls, value: str | list[str]) -> list[str]:
@@ -47,3 +57,10 @@ class Settings(BaseSettings):
         if isinstance(value, str):
             return [item.strip() for item in value.split(",") if item.strip()]
         return value
+
+    @field_validator("TG_SOURCE_CHATS", mode="before")
+    @classmethod
+    def parse_tg_chats(cls, value: str | list[str]) -> list[str]:
+        if isinstance(value, str):
+            return [item.strip().lstrip("@") for item in value.split(",") if item.strip()]
+        return [item.strip().lstrip("@") for item in value if item.strip()]
