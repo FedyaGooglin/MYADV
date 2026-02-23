@@ -78,6 +78,10 @@ def run_cli() -> None:
     stats = asyncio.run(run_once(settings))
     logging.getLogger(__name__).info("Collection done: %s", stats)
 
+    if not settings.RUN_ONCE_SEND_DELIVERY:
+        logging.getLogger(__name__).info("Delivery after run_once is disabled")
+        return
+
     sent_count = asyncio.run(deliver_updates_after_collect(settings))
     if sent_count:
         logging.getLogger(__name__).info("Subscription delivery sent: %s", sent_count)

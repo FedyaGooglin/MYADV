@@ -33,6 +33,7 @@ class Settings(BaseSettings):
     REQUEST_TIMEOUT_SECONDS: int = 20
     REQUEST_RETRIES: int = 2
     EXISTING_BACKFILL_PER_RUN: int = 10
+    RUN_ONCE_SEND_DELIVERY: bool = True
 
     TG_API_ID: int | None = None
     TG_API_HASH: str = ""

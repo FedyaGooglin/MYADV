@@ -40,6 +40,13 @@ Run one Aykhal ingest pass:
 python -m classifieds_hub.collectors.run_once
 ```
 
+`run_once` by default also sends subscription updates after collect.
+If you need database-only ingest (without Telegram delivery), set in `.env`:
+
+```bash
+RUN_ONCE_SEND_DELIVERY=false
+```
+
 Run Telegram chat ingest pass (Client API):
 
 ```bash
